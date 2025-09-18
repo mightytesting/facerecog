@@ -2,3 +2,5 @@ Flask
 requests
 numpy
 face-recognition
+dlib
+cmake
