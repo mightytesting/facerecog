@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pro Face Recognition — Smart Attendance System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .glass {
+      background: rgba(17, 25, 40, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .face-box {
+      position: absolute;
+      border: 2px solid #22c55e;
+      border-radius: 8px;
+      pointer-events: none;
+      animation: glow 1.2s ease-in-out infinite alternate;
+    }
+    @keyframes glow {
+      from { box-shadow: 0 0 10px rgba(34, 197, 94, 0.4); }
+      to { box-shadow: 0 0 20px rgba(34, 197, 94, 0.9); }
+    }
+    canvas { display:block; width:100%; height:auto; border-radius:0.75rem; }
+    .scan-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.25);
+      overflow: hidden;
+      border-radius: 0.75rem;
+      display: none;
+    }
+    .scan-line {
+      position: absolute; top: 0; left: 0; width: 100%; height: 4px;
+      background: #22c55e; box-shadow: 0 0 16px #22c55e;
+      animation: scan 2s linear infinite;
+    }
+    @keyframes scan {
+      0% { transform: translateY(-100%); }
+      50% { transform: translateY(100%); }
+      100% { transform: translateY(-100%); }
+    }
+    #results-list {
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+    #results-list.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .attendance-notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+      max-width: 400px;
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+    }
+    .attendance-notification.show {
+      transform: translateX(0);
+    }
+    .match-img {
+      width: 50px;
+      height: 50px;
+      border-radius: 0.75rem;
+      object-fit: cover;
+      border: 2px solid rgba(34, 197, 94, 0.3);
+    }
+    .btn { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    @media (max-width: 768px) {
+      .mobile-stack { flex-direction: column; }
+      .mobile-full { width: 100%; margin-bottom: 1rem; }
+      .mobile-text-sm { font-size: 0.875rem; }
+    }
+    @keyframes checkmark {
+      0% { transform: scale(0) rotate(45deg); }
+      50% { transform: scale(1.2) rotate(45deg); }
+      100% { transform: scale(1) rotate(45deg); }
+    }
+    .checkmark { animation: checkmark 0.5s ease-in-out; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-gray-950 via-gray-900 to-black text-gray-100 min-h-screen flex items-center justify-center p-4 md:p-6">
+<!-- Attendance Success Notification -->
+<div id="attendance-notification" class="attendance-notification">
+  <div class="glass rounded-2xl p-4 border border-green-500/20">
+    <div class="flex items-center gap-3">
+      <div class="bg-green-500/20 p-2 rounded-xl">
+        <svg class="w-6 h-6 text-green-400 checkmark" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+        </svg>
+      </div>
+      <div>
+        <h3 class="font-semibold text-green-400">Attendance Marked!</h3>
+        <p class="text-sm text-gray-300" id="attendance-message">Successfully marked attendance</p>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="max-w-7xl w-full grid lg:grid-cols-2 gap-6 glass rounded-3xl shadow-2xl overflow-hidden p-4 md:p-6">
+  <!-- Left Section -->
+  <div class="flex flex-col">
+    <header class="flex items-center gap-3 mb-6">
+      <div class="bg-green-600 text-white font-bold rounded-xl px-3 py-2 shadow-lg animate-pulse">FR</div>
+      <div class="flex-1">
+        <h1 class="text-2xl md:text-3xl font-extrabold">Pro Face Recognition</h1>
+        <p class="text-gray-400 text-sm">Upload an image or use your camera — AI will scan faces and mark attendance automatically.</p>
+      </div>
+      <a href="/student-login" class="hidden md:block px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-xl text-sm font-medium transition-colors duration-200">
+        Student Portal
+      </a>
+    </header>
+    <div id="drop-area" class="glass border-2 border-dashed border-gray-700 rounded-xl p-4 text-center relative transition hover:border-green-500">
+      <input id="file-input" type="file" accept="image/*" class="hidden">
+      <div id="preview-area" class="relative mb-3">
+        <canvas id="preview-canvas"></canvas>
+        <div id="face-boxes"></div>
+        <div class="scan-overlay" id="scan-overlay"><div class="scan-line"></div></div>
+      </div>
+      <div class="flex flex-col md:flex-row justify-between gap-3 mt-3">
+        <div class="flex gap-2 mobile-full">
+          <button id="choose-btn" class="btn flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-xl mobile-text-sm">Choose Image</button>
+          <button id="clear-btn" class="btn flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-xl mobile-text-sm">Clear</button>
+        </div>
+        <div class="flex gap-2 mobile-full">
+          <button id="toggle-camera" class="btn flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-xl mobile-text-sm">Open Camera</button>
+          <button id="capture-btn" class="btn flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-xl mobile-text-sm">Scan & Mark</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 mt-4">
+        <span class="w-3 h-3 rounded-full bg-gray-600 shadow-md" id="state-dot"></span>
+        <div class="flex-1 bg-gray-700 rounded-full h-2 overflow-hidden">
+          <div id="progress-bar" class="h-2 bg-green-500 w-0 transition-all duration-500"></div>
+        </div>
+        <span id="progress-text" class="text-xs text-gray-400 w-16 text-right">Idle</span>
+      </div>
+      <div class="absolute top-2 right-3 text-gray-500 text-xs">Tip: drag & drop image</div>
+    </div>
+    <!-- Camera Section -->
+    <div class="mt-4 flex flex-col md:flex-row gap-4 items-center">
+      <video id="video" width="320" height="220" autoplay playsinline muted class="rounded-lg shadow-md border border-gray-700 w-full md:w-auto"></video>
+      <div class="flex-1 text-center md:text-left">
+        <p class="text-sm text-gray-500 mb-2">Camera preview — press "Scan & Mark" to capture and process attendance.</p>
+        <div class="glass rounded-lg p-3">
+          <h4 class="font-medium text-green-400 mb-2">Today's Active Class</h4>
+          <div id="current-class-info" class="text-sm text-gray-400">
+            Loading class information...
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Quick Stats -->
+    <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="glass rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-blue-400" id="faces-detected">0</div>
+        <div class="text-xs text-gray-400">Faces</div>
+      </div>
+      <div class="glass rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-green-400" id="attendance-marked">0</div>
+        <div class="text-xs text-gray-400">Marked</div>
+      </div>
+      <div class="glass rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-yellow-400" id="confidence-avg">0%</div>
+        <div class="text-xs text-gray-400">Confidence</div>
+      </div>
+      <div class="glass rounded-lg p-3 text-center">
+        <div class="text-lg font-bold text-purple-400" id="processing-time">0s</div>
+        <div class="text-xs text-gray-400">Time</div>
+      </div>
+    </div>
+    <!-- Mobile Student Portal Button -->
+    <a href="/student-login" class="md:hidden mt-4 w-full text-center px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-medium transition-colors duration-200">
+      Access Student Portal
+    </a>
+  </div>
+  <!-- Right Section -->
+  <div class="flex flex-col">
+    <div class="flex justify-between items-center border-b border-gray-700 pb-3 mb-4">
+      <div>
+        <h2 class="text-xl font-bold">Recognition Results</h2>
+        <p class="text-gray-400 text-sm">Face matches & attendance status</p>
+      </div>
+      <span class="text-xs text-gray-400">Engine: face_recognition v1.3.0</span>
+    </div>
+    <div id="results-list" class="flex-1 overflow-auto glass rounded-xl p-4 text-gray-400 text-sm min-h-96">
+      <div class="text-center py-12">
+        <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        <h3 class="text-lg font-medium text-gray-300 mb-2">Ready to Scan</h3>
+        <p>Upload an image or use camera to start face recognition and automatic attendance marking.</p>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const fileInput = document.getElementById('file-input');
+const chooseBtn = document.getElementById('choose-btn');
+const clearBtn = document.getElementById('clear-btn');
+const dropArea = document.getElementById('drop-area');
+const previewCanvas = document.getElementById('preview-canvas');
+const ctx = previewCanvas.getContext('2d');
+const resultsList = document.getElementById('results-list');
+const video = document.getElementById('video');
+const toggleCameraBtn = document.getElementById('toggle-camera');
+const captureBtn = document.getElementById('capture-btn');
+const progressBar = document.getElementById('progress-bar');
+const progressText = document.getElementById('progress-text');
+const stateDot = document.getElementById('state-dot');
+const attendanceNotification = document.getElementById('attendance-notification');
+let currentImageBlob = null;
+let stream = null;
+let processingStartTime = null;
+
+async function loadCurrentClass() {
+  try {
+    const response = await fetch('/api/classes/today');
+    const classes = await response.json();
+    const currentClassInfo = document.getElementById('current-class-info');
+    if (classes.length > 0) {
+      const currentClass = classes[0];
+      currentClassInfo.innerHTML = `
+        <div class="font-medium">${currentClass.subject_name}</div>
+        <div class="text-xs text-gray-500">${currentClass.subject_code} • ${currentClass.class_time}</div>
+        <div class="text-xs text-green-400 mt-1">Prof. ${currentClass.teacher_name}</div>
+      `;
+    } else {
+      currentClassInfo.innerHTML = '<div class="text-gray-500">No classes scheduled today</div>';
+    }
+  } catch (error) {
+    document.getElementById('current-class-info').innerHTML = '<div class="text-red-400">Error loading class info</div>';
+  }
+}
+function setState(text, color) {
+  progressText.textContent = text;
+  stateDot.style.background = color || '#4b5563';
+}
+function setProgress(p) {
+  progressBar.style.width = Math.max(0, Math.min(100, p)) + '%';
+}
+function updateStats(facesCount, markedCount, avgConfidence, processingTime) {
+  document.getElementById('faces-detected').textContent = facesCount;
+  document.getElementById('attendance-marked').textContent = markedCount;
+  document.getElementById('confidence-avg').textContent = avgConfidence + '%';
+  document.getElementById('processing-time').textContent = processingTime + 's';
+}
+function showAttendanceNotification(message, student) {
+  const notification = document.getElementById('attendance-notification');
+  const messageElement = document.getElementById('attendance-message');
+  if (student) {
+    messageElement.textContent = `${student.name} (${student.roll_no}) - ${message}`;
+  } else {
+    messageElement.textContent = message;
+  }
+  notification.classList.add('show');
+  setTimeout(() => { notification.classList.remove('show'); }, 5000);
+}
+function resetPreview() {
+  ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  currentImageBlob = null;
+  setProgress(0);
+  setState('Idle');
+  resultsList.innerHTML = `
+    <div class="text-center py-12">
+      <svg class="w-16 h-16 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+      <h3 class="text-lg font-medium text-gray-300 mb-2">Ready to Scan</h3>
+      <p>Upload an image or use camera to start face recognition and automatic attendance marking.</p>
+    </div>
+  `;
+  resultsList.classList.remove("show");
+  updateStats(0, 0, 0, 0);
+}
+chooseBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async e => {
+  if (!e.target.files || !e.target.files[0]) return;
+  await loadAndPreviewFile(e.target.files[0]);
+});
+async function loadAndPreviewFile(file) {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const maxW = 520;
+    const scale = Math.min(1, maxW / img.width);
+    previewCanvas.width = img.width * scale;
+    previewCanvas.height = img.height * scale;
+    ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    ctx.drawImage(img, 0, 0, previewCanvas.width, previewCanvas.height);
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+  currentImageBlob = file;
+  setState('Image loaded', '#22c55e');
+  setProgress(10);
+}
+clearBtn.addEventListener('click', resetPreview);
+toggleCameraBtn.addEventListener('click', async () => {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    video.srcObject = null;
+    toggleCameraBtn.textContent = 'Open Camera';
+  } else {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: 'user'
+        }
+      });
+      video.srcObject = stream;
+      toggleCameraBtn.textContent = 'Close Camera';
+    } catch (err) {
+      alert('Unable to access camera: ' + err.message);
+    }
+  }
+});
+captureBtn.addEventListener('click', async () => {
+  if (!currentImageBlob && !stream) {
+    alert('Choose image or open camera first.');
+    return;
+  }
+  processingStartTime = Date.now();
+  let blobToSend = currentImageBlob;
+  if (stream && !currentImageBlob) {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const data = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.8));
+    blobToSend = data;
+    await loadAndPreviewFile(blobToSend);
+  }
+  setState('Scanning faces...', '#3b82f6');
+  setProgress(40);
+  document.getElementById('scan-overlay').style.display = 'block';
+  const formData = new FormData();
+  formData.append('image', blobToSend, 'upload.jpg');
+  try {
+    const resp = await fetch('/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    const processingTime = ((Date.now() - processingStartTime) / 1000).toFixed(1);
+    setProgress(100);
+    setState('Processing complete', '#22c55e');
+    document.getElementById('scan-overlay').style.display = 'none';
+    renderResults(data);
+    let totalConfidence = 0;
+    let matchCount = 0;
+    data.results.forEach(face => {
+      face.matches.forEach(match => {
+        totalConfidence += match.confidence || 0;
+        matchCount++;
+      });
+    });
+    const avgConfidence = matchCount > 0 ? Math.round(totalConfidence / matchCount) : 0;
+    updateStats(data.faces_detected, data.attendance_marked?.length || 0, avgConfidence, processingTime);
+    if (data.attendance_marked && data.attendance_marked.length > 0) {
+      data.attendance_marked.forEach((attendance, index) => {
+        setTimeout(() => {
+          if (attendance.result.success) {
+            showAttendanceNotification(
+              `Attendance marked successfully!`,
+              attendance.student
+            );
+          } else {
+            showAttendanceNotification(
+              `${attendance.result.message}`,
+              attendance.student
+            );
+          }
+        }, index * 1000);
+      });
+    }
+  } catch (err) {
+    setState('Processing failed', '#ef4444');
+    const processingTime = ((Date.now() - processingStartTime) / 1000).toFixed(1);
+    updateStats(0, 0, 0, processingTime);
+    resultsList.innerHTML = `<p class="text-red-400 text-center py-8">Upload error: ${err.message}</p>`;
+  }
+});
+function renderResults(data) {
+  if (!data || !data.results) return;
+  let html = `<div class="mb-4">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-semibold text-lg">Recognition Results</h3>
+      <span class="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-sm">
+        ${data.faces_detected} face${data.faces_detected !== 1 ? 's' : ''} detected
+      </span>
+    </div>`;
+  if (data.attendance_marked && data.attendance_marked.length > 0) {
+    html += `<div class="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-xl">
+      <h4 class="font-medium text-green-400 mb-2">✅ Attendance Summary</h4>
+      <div class="text-sm text-gray-300">
+        ${data.attendance_marked.length} student${data.attendance_marked.length !== 1 ? 's' : ''} processed for ${data.attendance_marked[0]?.class?.subject || 'current class'}
+      </div>
+    </div>`;
+  }
+  data.results.forEach((face, idx) => {
+    html += `<div class="mb-4 p-4 glass rounded-xl">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="bg-purple-500/20 p-2 rounded-lg">
+          <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        </div>
+        <h4 class="font-semibold">Face #${idx + 1}</h4>
+      </div>`;
+    if (face.matches && face.matches.length > 0) {
+      face.matches.forEach(match => {
+        const attendanceStatus = data.attendance_marked?.find(a => a.student.student_id === match.student_id);
+        html += `<div class="flex items-center gap-4 p-3 bg-gray-800/30 rounded-xl mb-2">
+          <img src="${match.matched_url}" class="match-img" alt="${match.name}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTAiIGhlaWdodD0iNTAiIHZpZXdCb3g9IjAgMCA1MCA1MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjUwIiBoZWlnaHQ9IjUwIiBmaWxsPSIjMzc0MTUxIiByeD0iOCIvPgo8cGF0aCBkPSJNMjUgMjJDMjcuNzYxNCAyMiAzMCAxOS43NjE0IDMwIDE3QzMwIDE0LjIzODYgMjcuNzYxNCAxMiAyNSAxMkMyMi4yMzg2IDEyIDIwIDE0LjIzODYgMjAgMTdDMjAgMTkuNzYxNCAyMi4yMzg2IDIyIDI1IDIyWiIgZmlsbD0iIzZCNzI4MCIvPgo8cGF0aCBkPSJNMTYgMzdDMTYgMzIuMDI5NCAzOS4zNTc5IDI4IDE0IDI4SDM2QzM5LjY0MjEgMjggNDMgMzIuMDI5NCA0MyAzN0g0MyIgc3Ryb2tlPSIjNkI3MjgwIiBzdHJva2Utd2lkdGg9IjIiLz4KPC9zdmc+Cg=='">
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <h5 class="font-medium text-white">${match.name}</h5>
+              <span class="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full">${match.roll_no}</span>
+            </div>
+            <div class="flex items-center gap-4 text-xs text-gray-400">
+              <span>Confidence: ${match.confidence}%</span>
+              <span>Distance: ${match.distance}</span>
+            </div>
+            ${attendanceStatus ? `
+              <div class="mt-2 flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full ${attendanceStatus.result.success ? 'bg-green-400' : 'bg-red-400'}"></div>
+                <span class="text-xs ${attendanceStatus.result.success ? 'text-green-400' : 'text-red-400'}">
+                  ${attendanceStatus.result.message}
+                </span>
+              </div>
+            ` : ''}
+          </div>
+          <div class="text-right">
+            <div class="w-3 h-3 rounded-full bg-green-400 animate-pulse"></div>
+          </div>
+        </div>`;
+      });
+    } else {
+      html += `<div class="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-center">
+        <p class="text-red-400 font-medium">❌ No match found</p>
+        <p class="text-gray-400 text-xs mt-1">Face not recognized in database</p>
+      </div>`;
+    }
+    html += `</div>`;
+  });
+  html += `</div>`;
+  resultsList.innerHTML = html;
+  resultsList.classList.add("show");
+}
+// Drag and drop functionality
+dropArea.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropArea.classList.add('border-green-500');
+});
+dropArea.addEventListener('dragleave', () => {
+  dropArea.classList.remove('border-green-500');
+});
+dropArea.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dropArea.classList.remove('border-green-500');
+  const files = e.dataTransfer.files;
+  if (files.length > 0 && files[0].type.startsWith('image/')) {
+    await loadAndPreviewFile(files[0]);
+  }
+});
+// Initialize
+previewCanvas.width = 520;
+previewCanvas.height = 320;
+resetPreview();
+loadCurrentClass();
+</script>
+</body>
+</html>
